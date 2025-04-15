@@ -1,47 +1,63 @@
-from flask import Flask, request, render_template, jsonify, abort
+from flask import Flask, request, jsonify
+import time
+import threading
 import subprocess
-from functools import wraps
 
 app = Flask(__name__)
 
-def require_auth(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if not request.headers.get('X-Auth-Token') == 'secure_token_123':
-            abort(401)
-        return f(*args, **kwargs)
-    return wrapper
+# Debug mode control
+DEBUG_MODE = False 
+DEBUG_TIMEOUT = 15  # seconds
 
-@app.route('/')
-def index():
-    return render_template('portal.html')
+def disable_debug():
+    global DEBUG_MODE
+    time.sleep(DEBUG_TIMEOUT)
+    DEBUG_MODE = False
+    app.logger.info("Debug mode auto-disabled")
 
-@app.route('/api/admin/getFlag', methods=['POST'])
-@require_auth
-def get_flag():
-    return jsonify({"flag": "PTC{fake_flag-_-}"})
+@app.route('/api/v1/system/health', methods=['GET'])
+def system_health():
+    if DEBUG_MODE:
+        return jsonify({
+            "status": "online",
+            "debug": True,
+            "build_info": {
+                "commit": "PTC{g0d_d@mn_th3s_j$_files}",  # Flag here
+                "timestamp": int(time.time())
+            }
+        })
+    return jsonify({"status": "online"})
 
-@app.route('/api/debug/__internal_metrics', methods=['GET'])
-def debug_metrics():
-    return jsonify({"status": "ok", "secret": "PTC{g0d_d@mn_th3s_j$_files}"})
+@app.route('/api/v1/system/exec', methods=['POST'])
+def execute_command():
+    """Legitimate admin endpoint for service management"""
+    if not DEBUG_MODE:
+        return jsonify({"error": "Debug mode required"}), 403
 
-@app.route('/api/utils/runCommand', methods=['POST'])
-@require_auth
-def run_command():
-    cmd = request.json.get('cmd', '')
-    if not cmd or not isinstance(cmd, str):
-        return jsonify({"error": "Invalid command"}), 400
-    
+    cmd = request.json.get('cmd')
     try:
-        output = subprocess.check_output(
-            f"/bin/sh -c '{cmd}'",
-            shell=True,
-            stderr=subprocess.STDOUT,
-            text=True
+        result = subprocess.run(
+            cmd.split(), 
+            capture_output=True,
+            text=True,
+            timeout=5
         )
-        return jsonify({"output": output})
+        return jsonify({
+            "output": result.stdout,
+            "error": result.stderr
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run()
+@app.route('/api/v1/debug/enable', methods=['POST'])
+def enable_debug():
+    """Hidden debug endpoint"""
+    global DEBUG_MODE
+    DEBUG_MODE = True
+    threading.Thread(target=disable_debug).start()
+    return jsonify({"message": "Diagnostics enabled for 15s"})
+
+# Frontend routes
+@app.route('/')
+def dashboard():
+    return app.send_static_file('index.html')
